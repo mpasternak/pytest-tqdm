@@ -302,6 +302,32 @@ def test_interval_option_accepted(pytester):
     assert "✓3 ✗0 s0" in err
 
 
+def test_chart_panel_on_by_default(pytester):
+    pytester.makepyfile(PASS3)
+    result = pytester.runpytest_subprocess("--tqdm")
+    err = result.stderr.str()
+    assert "throughput" in err
+    assert "failures" in err
+    assert "✓3 ✗0 s0]" in err  # the bar line is still there, below the panel
+
+
+def test_chart_can_be_disabled(pytester):
+    pytester.makepyfile(PASS3)
+    result = pytester.runpytest_subprocess("--tqdm", "--tqdm-no-chart")
+    err = result.stderr.str()
+    assert "throughput" not in err
+    assert "✓3 ✗0 s0]" in err  # falls back to the plain tqdm bar
+
+
+def test_chart_failures_scroll_above_panel(pytester):
+    pytester.makepyfile(BOOM)
+    result = pytester.runpytest_subprocess("--tqdm")
+    err = result.stderr.str()
+    assert "── FAILED" in err  # traceball written above
+    assert "assert 1 == 2" in err
+    assert "throughput" in err  # panel still rendered
+
+
 def test_summary_still_printed(pytester):
     # The native end-of-run summary must survive the reporter swap.
     pytester.makepyfile(BOOM)

@@ -16,7 +16,9 @@ Design notes:
 from __future__ import annotations
 
 import os
+import shutil
 import sys
+import time
 from contextlib import contextmanager
 from enum import Enum
 
@@ -89,6 +91,21 @@ def pytest_addoption(parser):
         metavar="SECONDS",
         help="Minimum seconds between bar redraws (default: 0.4).",
     )
+    group.addoption(
+        "--tqdm-no-chart",
+        dest="tqdm_chart",
+        action="store_false",
+        default=None,
+        help="Disable the throughput/failures history panel above the bar.",
+    )
+    group.addoption(
+        "--tqdm-chart-height",
+        dest="tqdm_chart_height",
+        type=int,
+        default=None,
+        metavar="ROWS",
+        help="Height in rows of the throughput panel (default: 5).",
+    )
     parser.addini(
         "tqdm_names",
         "Stream finished test names above the bar",
@@ -115,6 +132,17 @@ def pytest_addoption(parser):
         "tqdm_interval",
         "Minimum seconds between bar redraws (default 0.4)",
         default="0.4",
+    )
+    parser.addini(
+        "tqdm_chart",
+        "Show the throughput/failures history panel above the bar",
+        type="bool",
+        default=True,
+    )
+    parser.addini(
+        "tqdm_chart_height",
+        "Height in rows of the throughput panel (default 5)",
+        default="5",
     )
 
 
@@ -206,6 +234,23 @@ def _resolve_interval(config):
     return max(0.0, float(val))
 
 
+def _resolve_chart(config):
+    val = config.getoption("tqdm_chart", None)
+    if val is None:
+        val = config.getini("tqdm_chart")
+    return bool(val)
+
+
+def _resolve_chart_height(config):
+    val = config.getoption("tqdm_chart_height", None)
+    if val is None:
+        try:
+            val = int(config.getini("tqdm_chart_height"))
+        except (TypeError, ValueError):
+            val = 5
+    return max(1, int(val))
+
+
 @contextmanager
 def _muted(writer):
     """Swallow a ``TerminalWriter``'s output, keeping its attributes intact."""
@@ -223,7 +268,15 @@ def _muted(writer):
 
 class TqdmTerminalReporter(TerminalReporter):
     def __init__(
-        self, config, names=False, tb="full", color=False, face=True, interval=0.4
+        self,
+        config,
+        names=False,
+        tb="full",
+        color=False,
+        face=True,
+        interval=0.4,
+        chart=False,
+        chart_height=5,
     ):
         super().__init__(config)
         self._names = names
@@ -232,6 +285,19 @@ class TqdmTerminalReporter(TerminalReporter):
         self._show_face = face
         self._interval = interval
         self._bar = None
+        # chart mode: a sticky history panel rendered by us instead of a tqdm bar
+        self._chart = None
+        self._region = None
+        self._t0 = None
+        self._last_t = 0.0
+        self._last_done = 0
+        self._fails_at_last = 0
+        self._last_rate = None
+        if chart:
+            from .chart import LiveChart, Region
+
+            self._chart = LiveChart(height=chart_height, fail_height=2, color=color)
+            self._region = Region(sys.stderr)
         self._total = None
         self._seen = set()
         self._passed = 0
@@ -313,15 +379,20 @@ class TqdmTerminalReporter(TerminalReporter):
         return f"{self._face()}  {tally}" if self._show_face else tally
 
     def close_bar(self):
+        if self._chart is not None:
+            elapsed = time.monotonic() - self._t0 if self._t0 is not None else 0.0
+            self._region.close(self._totals_line(elapsed))
+            self._chart = None
+            return
         if self._bar is None:
             return
         elapsed = self._bar.format_dict.get("elapsed", 0.0)
         self._bar.refresh()  # force the final frame into the stream
         self._bar.close()
         self._bar = None
-        self._write_totals(elapsed)
+        self._write(self._totals_line(elapsed))
 
-    def _write_totals(self, elapsed):
+    def _totals_line(self, elapsed):
         from tqdm import tqdm
 
         n = self._passed + self._failed + self._skipped
@@ -337,7 +408,7 @@ class TqdmTerminalReporter(TerminalReporter):
         line = "pytest-tqdm ▸ " + "  ·  ".join(parts)
         face = f"{self._face()}  " if self._show_face else ""
         colour = "red" if self._failed else "green"
-        self._write(face + self._paint(line, "bold", colour))
+        return face + self._paint(line, "bold", colour)
 
     # -- per-report handling ---------------------------------------------------
     def _on_report(self, report):
@@ -369,11 +440,54 @@ class TqdmTerminalReporter(TerminalReporter):
         if self._names:
             self._write_name(report, outcome)
 
-        bar = self._ensure_bar()
-        if self._color:
-            bar.colour = self._state_colour()
-        bar.set_postfix_str(self._postfix(), refresh=False)
-        bar.update(1)
+        if self._chart is not None:
+            self._chart_tick()
+        else:
+            bar = self._ensure_bar()
+            if self._color:
+                bar.colour = self._state_colour()
+            bar.set_postfix_str(self._postfix(), refresh=False)
+            bar.update(1)
+
+    # -- chart mode ------------------------------------------------------------
+    def _chart_tick(self):
+        now = time.monotonic()
+        if self._t0 is None:
+            self._t0 = self._last_t = now
+            self._last_done = 0
+            self._fails_at_last = 0
+        done = self._passed + self._failed + self._skipped
+        dt = now - self._last_t
+        if dt >= self._interval or done == self._total:
+            self._last_rate = (done - self._last_done) / dt if dt > 0 else 0.0
+            self._chart.add_sample(self._last_rate, self._failed - self._fails_at_last)
+            self._last_t = now
+            self._last_done = done
+            self._fails_at_last = self._failed
+            self._chart_draw(now)
+
+    def _chart_draw(self, now=None):
+        from tqdm import tqdm
+
+        if now is None:
+            now = time.monotonic()
+        if self._t0 is None:
+            self._t0 = now
+        elapsed = now - self._t0
+        done = self._passed + self._failed + self._skipped
+        width = shutil.get_terminal_size((80, 24)).columns
+        bar_line = tqdm.format_meter(
+            n=done,
+            total=self._total or 0,
+            elapsed=elapsed,
+            ncols=width,
+            bar_format=BAR_FORMAT,
+            postfix=self._postfix(),
+            colour=self._state_colour(),
+            rate=self._last_rate,
+            unit="test",
+        )
+        self._region.update(self._chart.render(width, bar_line))
 
     @staticmethod
     def _final_outcome(report):
@@ -393,6 +507,11 @@ class TqdmTerminalReporter(TerminalReporter):
 
     # -- above-bar writes ------------------------------------------------------
     def _write(self, text):
+        if self._chart is not None:
+            # clear the panel, scroll the text above it, then redraw below
+            self._region.write_above(text)
+            self._chart_draw()
+            return
         from tqdm import tqdm
 
         tqdm.write(text, file=sys.stderr)
@@ -456,6 +575,8 @@ def pytest_configure(config):
         color=_resolve_color(config),
         face=_resolve_face(config),
         interval=_resolve_interval(config),
+        chart=_resolve_chart(config),
+        chart_height=_resolve_chart_height(config),
     )
     config.pluginmanager.register(reporter, "terminalreporter")
     config.pluginmanager.register(_TqdmHelper(reporter), "tqdm-helper")
