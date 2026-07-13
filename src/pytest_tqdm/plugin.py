@@ -66,6 +66,29 @@ def pytest_addoption(parser):
         default=None,
         help="Traceback verbosity printed above the bar for failures (default: full).",
     )
+    group.addoption(
+        "--tqdm-color",
+        dest="tqdm_color",
+        choices=("auto", "always", "never"),
+        default=None,
+        help="Colorize the bar: auto (TTY only, default), always, or never. "
+        "NO_COLOR is always respected.",
+    )
+    group.addoption(
+        "--tqdm-no-face",
+        dest="tqdm_face",
+        action="store_false",
+        default=None,
+        help="Hide the Doom-style health face on the bar.",
+    )
+    group.addoption(
+        "--tqdm-interval",
+        dest="tqdm_interval",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="Minimum seconds between bar redraws (default: 0.4).",
+    )
     parser.addini(
         "tqdm_names",
         "Stream finished test names above the bar",
@@ -77,6 +100,45 @@ def pytest_addoption(parser):
         "Traceback verbosity above the bar (full|line|no)",
         default="full",
     )
+    parser.addini(
+        "tqdm_color",
+        "Colorize the bar (auto|always|never)",
+        default="auto",
+    )
+    parser.addini(
+        "tqdm_face",
+        "Show a Doom-style health face on the bar",
+        type="bool",
+        default=True,
+    )
+    parser.addini(
+        "tqdm_interval",
+        "Minimum seconds between bar redraws (default 0.4)",
+        default="0.4",
+    )
+
+
+# Doom-guy-ish health faces, best → worst by failure ratio. The more tests
+# fail, the more the face suffers. All green = insufferably smug.
+_FACES = [
+    (0.02, "🙂"),
+    (0.10, "😐"),
+    (0.25, "😟"),
+    (0.50, "😰"),
+    (0.90, "🤕"),
+    (1.01, "💀"),
+]
+
+
+# ANSI SGR codes; only ever emitted when colour is enabled (TTY + not NO_COLOR).
+_ANSI = {
+    "green": "\033[32m",
+    "red": "\033[31m",
+    "yellow": "\033[33m",
+    "bold": "\033[1m",
+    "dim": "\033[2m",
+    "reset": "\033[0m",
+}
 
 
 def _env_bool(name):
@@ -116,6 +178,34 @@ def _resolve_tb(config):
     return val
 
 
+def _resolve_color(config):
+    mode = config.getoption("tqdm_color", None) or config.getini("tqdm_color") or "auto"
+    if mode == "never":
+        return False
+    if "NO_COLOR" in os.environ:  # https://no-color.org — always wins
+        return False
+    if mode == "always":
+        return True
+    return sys.stderr.isatty()
+
+
+def _resolve_face(config):
+    val = config.getoption("tqdm_face", None)
+    if val is None:
+        val = config.getini("tqdm_face")
+    return bool(val)
+
+
+def _resolve_interval(config):
+    val = config.getoption("tqdm_interval", None)
+    if val is None:
+        try:
+            val = float(config.getini("tqdm_interval"))
+        except (TypeError, ValueError):
+            val = 0.4
+    return max(0.0, float(val))
+
+
 @contextmanager
 def _muted(writer):
     """Swallow a ``TerminalWriter``'s output, keeping its attributes intact."""
@@ -132,10 +222,15 @@ def _muted(writer):
 
 
 class TqdmTerminalReporter(TerminalReporter):
-    def __init__(self, config, names=False, tb="full"):
+    def __init__(
+        self, config, names=False, tb="full", color=False, face=True, interval=0.4
+    ):
         super().__init__(config)
         self._names = names
         self._tb = tb
+        self._color = color
+        self._show_face = face
+        self._interval = interval
         self._bar = None
         self._total = None
         self._seen = set()
@@ -170,11 +265,52 @@ class TqdmTerminalReporter(TerminalReporter):
                 dynamic_ncols=True,
                 leave=False,
                 disable=False,
-                mininterval=1.0,  # redraw at most ~once per second
+                mininterval=self._interval,  # min seconds between redraws
                 bar_format=BAR_FORMAT,
+                colour=self._state_colour(),
                 file=sys.stderr,
             )
         return self._bar
+
+    def _paint(self, text, *codes):
+        if not self._color or not codes:
+            return text
+        return "".join(_ANSI[c] for c in codes) + text + _ANSI["reset"]
+
+    def _state_colour(self):
+        """Bar colour name for tqdm: red on any failure, else green (yellow if
+        only skips so far). Returns ``None`` when colour is disabled."""
+        if not self._color:
+            return None
+        if self._failed:
+            return "red"
+        if self._passed == 0 and self._skipped:
+            return "yellow"
+        return "green"
+
+    def _face(self):
+        """Doom-guy-ish health face by failure ratio (best → worst)."""
+        if self._failed == 0:
+            return "😎"
+        done = self._passed + self._failed + self._skipped
+        ratio = self._failed / done if done else 1.0
+        for threshold, glyph in _FACES:
+            if ratio < threshold:
+                return glyph
+        return "💀"
+
+    def _postfix(self):
+        passed = self._paint(f"✓{self._passed}", "green")
+        if self._failed:
+            failed = self._paint(f"✗{self._failed}", "bold", "red")
+        else:
+            failed = self._paint("✗0", "dim")
+        if self._skipped:
+            skipped = self._paint(f"s{self._skipped}", "yellow")
+        else:
+            skipped = self._paint("s0", "dim")
+        tally = f"{passed} {failed} {skipped}"
+        return f"{self._face()}  {tally}" if self._show_face else tally
 
     def close_bar(self):
         if self._bar is None:
@@ -198,7 +334,10 @@ class TqdmTerminalReporter(TerminalReporter):
             f"✓{self._passed} ✗{self._failed} s{self._skipped}",
             worker_str,
         ]
-        self._write("pytest-tqdm ▸ " + "  ·  ".join(parts))
+        line = "pytest-tqdm ▸ " + "  ·  ".join(parts)
+        face = f"{self._face()}  " if self._show_face else ""
+        colour = "red" if self._failed else "green"
+        self._write(face + self._paint(line, "bold", colour))
 
     # -- per-report handling ---------------------------------------------------
     def _on_report(self, report):
@@ -231,10 +370,9 @@ class TqdmTerminalReporter(TerminalReporter):
             self._write_name(report, outcome)
 
         bar = self._ensure_bar()
-        bar.set_postfix_str(
-            f"✓{self._passed} ✗{self._failed} s{self._skipped}",
-            refresh=False,
-        )
+        if self._color:
+            bar.colour = self._state_colour()
+        bar.set_postfix_str(self._postfix(), refresh=False)
         bar.update(1)
 
     @staticmethod
@@ -263,9 +401,9 @@ class TqdmTerminalReporter(TerminalReporter):
         if self._tb == "no":
             return
         if self._tb == "line":
-            self._write(f"FAILED {report.nodeid}")
+            self._write(self._paint(f"FAILED {report.nodeid}", "bold", "red"))
             return
-        self._write(f"── FAILED {report.nodeid} ──")
+        self._write(self._paint(f"── FAILED {report.nodeid} ──", "bold", "red"))
         text = report.longreprtext
         if text:
             self._write(text)
@@ -312,7 +450,12 @@ def pytest_configure(config):
         if plugin is not None:
             config.pluginmanager.unregister(plugin)
     reporter = TqdmTerminalReporter(
-        config, names=_resolve_names(config), tb=_resolve_tb(config)
+        config,
+        names=_resolve_names(config),
+        tb=_resolve_tb(config),
+        color=_resolve_color(config),
+        face=_resolve_face(config),
+        interval=_resolve_interval(config),
     )
     config.pluginmanager.register(reporter, "terminalreporter")
     config.pluginmanager.register(_TqdmHelper(reporter), "tqdm-helper")

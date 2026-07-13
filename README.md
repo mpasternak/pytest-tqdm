@@ -58,6 +58,9 @@ pytest -n auto            # bar appears in your terminal, nothing changes in CI
 | `--no-tqdm` | `PYTEST_TQDM=0` | Force the bar off. |
 | `--tqdm-names` | `tqdm_names` (ini) | Also stream every finished test name above the bar. |
 | `--tqdm-tb=full\|line\|no` | `tqdm_tb` (ini) | Traceback verbosity above the bar for failures (default `full`). |
+| `--tqdm-color=auto\|always\|never` | `tqdm_color` (ini) | Colourize the bar (default `auto` = TTY only). `NO_COLOR` always wins. |
+| `--tqdm-no-face` | `tqdm_face` (ini) | Hide the Doom-style health face. |
+| `--tqdm-interval=SECONDS` | `tqdm_interval` (ini) | Min seconds between redraws (default `0.4`). |
 
 Resolution order for activation: `--tqdm` / `--no-tqdm` → `PYTEST_TQDM` →
 TTY auto-detection.
@@ -65,11 +68,26 @@ TTY auto-detection.
 ### The bar
 
 ```
- 42%|███████▉    | 512/1210 [00:37<00:48, 14.3test/s, ✓510 ✗2 s0 ▸ test_bar]
+😎  42%|███████▉    | 512/1210 [00:37<00:48, 14.3test/s, ✓510 ✗0 s0]
 ```
 
-percentage · bar · done/total · elapsed<eta · throughput · live ✓/✗/skip tally ·
-current test.
+face · percentage · bar · done/total · elapsed<eta · throughput · live ✓/✗/skip
+tally.
+
+### Colours & the face
+
+When colour is on (a TTY, or `--tqdm-color=always`), the bar is a live **red /
+green** health signal: **green** while everything passes, flipping **red** the
+instant a test fails (yellow if only skips so far). The tally is coloured too
+(`✓` green, `✗` bold red, `s` yellow), and failure headers are bold red.
+
+The little **Doom-guy-style face** on the left tracks the failure ratio and
+degrades accordingly — from insufferably smug to dead:
+
+`😎` all green → `🙂` → `😐` → `😟` → `😰` → `🤕` → `💀` everything's on fire.
+
+Hide it with `--tqdm-no-face`; turn colour off with `--tqdm-color=never` or
+`NO_COLOR=1`.
 
 ### The end-of-run line
 

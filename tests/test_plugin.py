@@ -224,6 +224,84 @@ def test_totals_line_reports_worker_count(pytester):
     assert "2 workers" in err
 
 
+GREEN = "\x1b[32m"
+RED = "\x1b[31m"
+
+
+def test_color_always_emits_ansi(pytester):
+    pytester.makepyfile(BOOM)
+    result = pytester.runpytest_subprocess("--tqdm", "--tqdm-color=always")
+    err = result.stderr.str()
+    assert RED in err  # our painted ✗ / failure header
+
+
+def test_color_never_no_ansi(pytester):
+    pytester.makepyfile(BOOM)
+    result = pytester.runpytest_subprocess("--tqdm", "--tqdm-color=never")
+    err = result.stderr.str()
+    assert GREEN not in err
+    assert RED not in err
+
+
+def test_color_auto_off_when_not_tty(pytester):
+    # Default (auto) + non-TTY subprocess => no colour even with the bar forced.
+    pytester.makepyfile(PASS3)
+    result = pytester.runpytest_subprocess("--tqdm")
+    err = result.stderr.str()
+    assert GREEN not in err
+    assert RED not in err
+
+
+def test_no_color_env_beats_always(pytester, monkeypatch):
+    monkeypatch.setenv("NO_COLOR", "1")
+    pytester.makepyfile(PASS3)
+    result = pytester.runpytest_subprocess("--tqdm", "--tqdm-color=always")
+    err = result.stderr.str()
+    assert GREEN not in err
+    assert RED not in err
+
+
+def test_bar_green_when_all_pass(pytester):
+    pytester.makepyfile(PASS3)
+    result = pytester.runpytest_subprocess("--tqdm", "--tqdm-color=always")
+    err = result.stderr.str()
+    assert GREEN in err
+
+
+def test_face_smug_when_all_pass(pytester):
+    pytester.makepyfile(PASS3)
+    result = pytester.runpytest_subprocess("--tqdm")
+    err = result.stderr.str()
+    assert "😎" in err
+
+
+def test_face_skull_when_all_fail(pytester):
+    pytester.makepyfile(
+        """
+        def test_a(): assert 0
+        def test_b(): assert 0
+        """
+    )
+    result = pytester.runpytest_subprocess("--tqdm")
+    err = result.stderr.str()
+    assert "💀" in err
+
+
+def test_face_hidden_with_no_face(pytester):
+    pytester.makepyfile(PASS3)
+    result = pytester.runpytest_subprocess("--tqdm", "--tqdm-no-face")
+    err = result.stderr.str()
+    assert "😎" not in err
+    assert "✓3 ✗0 s0" in err
+
+
+def test_interval_option_accepted(pytester):
+    pytester.makepyfile(PASS3)
+    result = pytester.runpytest_subprocess("--tqdm", "--tqdm-interval=0.1")
+    err = result.stderr.str()
+    assert "✓3 ✗0 s0" in err
+
+
 def test_summary_still_printed(pytester):
     # The native end-of-run summary must survive the reporter swap.
     pytester.makepyfile(BOOM)
