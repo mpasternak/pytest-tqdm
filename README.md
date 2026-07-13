@@ -11,15 +11,7 @@ topped with a live **throughput / failures history panel**. Failures scroll
 above the panel with full tracebacks; everything else stays quiet.
 Interactive-only, so it never pollutes CI logs or AI-agent output.
 
-```
- throughput  ·  now 18/s  ·  peak 32/s  ·  log
-   32 │                     ▁▄▃█▄▅█████████████████████▆▅▆▄▃▂
-      │                 ▅▄█▅██████████████████████████████████▇▅▄
-    0 │        ▄▅▅█████████████████████████████████████████████████▅▆▃
- failures
-      │              ●●          ● ●   ●    ●  ●●     ● ●
- 😰  61%|████████████▏     | 738/1210 [00:41<00:26, 17.9 test/s, ✓731 ✗7 s0]
-```
+![pytest-tqdm in action — the history panel, red/green bar and failures scrolling above](docs/demo.gif)
 
 The **bar** is a live red/green health signal (green while passing → red on the
 first failure), with a Doom-guy face that suffers as more tests fail. Above it,
