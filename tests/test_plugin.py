@@ -168,6 +168,43 @@ def test_rerun_advances_bar_once(pytester):
     assert "/1" in err
 
 
+def test_totals_line_at_end(pytester):
+    pytester.makepyfile(
+        """
+        def test_1(): pass
+        def test_2(): pass
+        def test_3(): assert 1 == 2
+        """
+    )
+    result = pytester.runpytest_subprocess("--tqdm")
+    err = result.stderr.str()
+    assert "pytest-tqdm ▸" in err
+    assert "3 tests in" in err
+    assert "tests/s" in err
+    assert "✓2 ✗1 s0" in err
+    assert "serial" in err
+
+
+def test_totals_line_reports_worker_count(pytester):
+    pytester.makepyfile(
+        """
+        def test_1(): pass
+        def test_2(): pass
+        def test_3(): pass
+        def test_4(): pass
+        def test_5(): pass
+        def test_6(): pass
+        def test_7(): pass
+        def test_8(): pass
+        """
+    )
+    result = pytester.runpytest_subprocess("--tqdm", "-n2")
+    err = result.stderr.str()
+    assert "pytest-tqdm ▸" in err
+    assert "8 tests in" in err
+    assert "2 workers" in err
+
+
 def test_summary_still_printed(pytester):
     # The native end-of-run summary must survive the reporter swap.
     pytester.makepyfile(BOOM)

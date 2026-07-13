@@ -142,6 +142,7 @@ class TqdmTerminalReporter(TerminalReporter):
         self._passed = 0
         self._failed = 0
         self._skipped = 0
+        self._workers = set()
 
     # -- suppress live per-test output, but keep the bookkeeping intact --------
     def pytest_runtest_logstart(self, nodeid, location):
@@ -172,13 +173,35 @@ class TqdmTerminalReporter(TerminalReporter):
         return self._bar
 
     def close_bar(self):
-        if self._bar is not None:
-            self._bar.refresh()  # force the final frame into the stream
-            self._bar.close()
-            self._bar = None
+        if self._bar is None:
+            return
+        elapsed = self._bar.format_dict.get("elapsed", 0.0)
+        self._bar.refresh()  # force the final frame into the stream
+        self._bar.close()
+        self._bar = None
+        self._write_totals(elapsed)
+
+    def _write_totals(self, elapsed):
+        from tqdm import tqdm
+
+        n = self._passed + self._failed + self._skipped
+        rate = n / elapsed if elapsed else 0.0
+        workers = len(self._workers)
+        worker_str = f"{workers} workers" if workers else "serial"
+        parts = [
+            f"{n} tests in {tqdm.format_interval(elapsed)}",
+            f"{rate:.1f} tests/s",
+            f"✓{self._passed} ✗{self._failed} s{self._skipped}",
+            worker_str,
+        ]
+        self._write("pytest-tqdm ▸ " + "  ·  ".join(parts))
 
     # -- per-report handling ---------------------------------------------------
     def _on_report(self, report):
+        # Track distinct xdist workers (reports carry .node on the controller).
+        node = getattr(report, "node", None)
+        if node is not None:
+            self._workers.add(node.gateway.id)
         # pytest-rerunfailures marks intermediate attempts with outcome "rerun".
         if getattr(report, "outcome", None) == "rerun":
             return
