@@ -11,13 +11,20 @@ Failures print above the bar with full tracebacks; everything else stays quiet.
 Interactive-only, so it never pollutes CI logs or AI-agent output.
 
 ```
- 42%|███████▉           | 512/1210 [00:37<00:48, 14.3test/s, ✓510 ✗2 s0 ▸ test_bar]
+😎  61%|████████████▏       | 738/1210 [00:41<00:26, 17.9test/s, ✓738 ✗0 s0]
+```
+
+The bar is a live **red / green** health signal — and once something breaks it
+goes red and the little Doom-guy face starts to suffer:
+
+```
+😰  61%|████████████▏       | 738/1210 [00:41<00:26, 17.9test/s, ✓731 ✗7 s0]
 ```
 
 …and a one-line summary when the run finishes:
 
 ```
-pytest-tqdm ▸ 1210 tests in 01:25  ·  14.2 tests/s  ·  ✓1180 ✗2 s28  ·  8 workers
+🙂  pytest-tqdm ▸ 1210 tests in 01:25  ·  14.2 tests/s  ·  ✓1180 ✗2 s28  ·  8 workers
 ```
 
 ## Why
