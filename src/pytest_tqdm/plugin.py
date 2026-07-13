@@ -157,6 +157,9 @@ class TqdmTerminalReporter(TerminalReporter):
     # -- bar lifecycle ---------------------------------------------------------
     def set_total(self, total):
         self._total = total
+        if self._bar is not None:
+            self._bar.total = total
+            self._bar.refresh()
 
     def _ensure_bar(self):
         if self._bar is None:
@@ -167,6 +170,7 @@ class TqdmTerminalReporter(TerminalReporter):
                 dynamic_ncols=True,
                 leave=False,
                 disable=False,
+                mininterval=1.0,  # redraw at most ~once per second
                 bar_format=BAR_FORMAT,
                 file=sys.stderr,
             )
@@ -228,8 +232,7 @@ class TqdmTerminalReporter(TerminalReporter):
 
         bar = self._ensure_bar()
         bar.set_postfix_str(
-            f"✓{self._passed} ✗{self._failed} s{self._skipped} "
-            f"▸ {nodeid.split('::')[-1]}",
+            f"✓{self._passed} ✗{self._failed} s{self._skipped}",
             refresh=False,
         )
         bar.update(1)
@@ -281,8 +284,17 @@ class _TqdmHelper:
         self._reporter = reporter
 
     def pytest_collection_finish(self, session):
-        # On the xdist controller (and serial runs) this is the full test list.
-        self._reporter.set_total(len(session.items))
+        # Serial runs (and some xdist versions) populate the controller's items.
+        if session.items:
+            self._reporter.set_total(len(session.items))
+
+    @pytest.hookimpl(optionalhook=True)
+    def pytest_xdist_node_collection_finished(self, node, ids):
+        # xdist controller: every worker collects the same set, so ``ids`` is
+        # the full test list. This is where the total actually comes from under
+        # xdist, because ``session.items`` on the controller is often empty.
+        if ids:
+            self._reporter.set_total(len(ids))
 
     def pytest_sessionfinish(self, session, exitstatus):
         self._reporter.close_bar()

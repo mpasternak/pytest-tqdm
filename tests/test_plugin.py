@@ -130,6 +130,25 @@ def test_total_taken_from_collection(pytester):
     assert "/5" in err
 
 
+def test_bar_total_known_under_xdist(pytester):
+    # Regression: under xdist the controller's session.items can be empty, so
+    # the total must come from pytest_xdist_node_collection_finished instead.
+    pytester.makepyfile("\n".join(f"def test_{i}(): pass" for i in range(8)))
+    result = pytester.runpytest_subprocess("--tqdm", "-n2")
+    err = result.stderr.str()
+    assert "/8" in err
+    assert "/?" not in err
+
+
+def test_postfix_has_no_test_name(pytester):
+    # The current-test name is intentionally NOT in the bar (it churns the line).
+    pytester.makepyfile(PASS3)
+    result = pytester.runpytest_subprocess("--tqdm")
+    err = result.stderr.str()
+    assert "✓3 ✗0 s0]" in err  # tally sits right before the closing bracket
+    assert "▸ test_" not in err  # no current-test name pushed into the bar
+
+
 def test_xdist_aggregates_into_single_bar(pytester):
     pytester.makepyfile(
         """
