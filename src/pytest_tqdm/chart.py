@@ -15,6 +15,7 @@ The panel height is fixed for the whole run, so the redraw is a plain
 
 from __future__ import annotations
 
+import math
 from collections import deque
 
 # 9 fill levels, empty → full. Used for the vertical throughput bars.
@@ -29,9 +30,16 @@ _ANSI = {
 }
 
 
-def sparkline_rows(values, height, peak):
+def sparkline_rows(values, height, peak, scale="linear"):
     """Render ``values`` as ``height`` rows of vertical bars (top row first),
-    each column scaled to ``peak``. Level 0 is blank, ``peak`` fills all rows."""
+    each column scaled to ``peak``. Level 0 is blank, ``peak`` fills all rows.
+
+    ``scale="log"`` applies ``log1p`` to values and peak first, so a few big
+    spikes no longer flatten everything else into the floor.
+    """
+    if scale == "log":
+        values = [math.log1p(max(0.0, v)) for v in values]
+        peak = math.log1p(max(0.0, peak))
     rows = [[] for _ in range(height)]
     steps = height * 8
     for value in values:
@@ -64,10 +72,11 @@ def dot_rows(counts, height):
 class LiveChart:
     """Ring buffer of throughput / failure samples + panel composition."""
 
-    def __init__(self, height=5, fail_height=2, color=False, cap=4000):
+    def __init__(self, height=5, fail_height=2, color=False, scale="log", cap=4000):
         self._height = height
         self._fail_height = fail_height
         self._color = color
+        self._scale = scale
         self._rates = deque(maxlen=cap)
         self._fails = deque(maxlen=cap)
         self._peak = 0.0
@@ -93,10 +102,14 @@ class LiveChart:
             fails = [0] * (inner - len(fails)) + fails
 
         peak = self._peak
-        spark = sparkline_rows(rates, self._height, peak)
+        current = self._rates[-1] if self._rates else 0.0
+        spark = sparkline_rows(rates, self._height, peak, self._scale)
         dots = dot_rows(fails, self._fail_height)
 
-        lines = [self._paint(f" throughput  ·  peak {peak:.0f}/s", "dim")]
+        header = f" throughput  ·  now {current:.0f}/s  ·  peak {peak:.0f}/s"
+        if self._scale == "log":
+            header += "  ·  log"
+        lines = [self._paint(header, "dim")]
         for i, row in enumerate(spark):
             if i == 0:
                 label = f"{peak:>5.0f}"

@@ -26,6 +26,17 @@ def test_sparkline_no_peak_is_all_blank():
     assert sparkline_rows([3, 7], height=2, peak=0) == ["  ", "  "]
 
 
+def _filled(rows, col):
+    return sum(1 for row in rows if row[col] != " ")
+
+
+def test_log_scale_lifts_small_values_off_the_floor():
+    # value 10 against a peak of 100: linear leaves it near-empty, log lifts it.
+    linear = sparkline_rows([10, 100], height=4, peak=100, scale="linear")
+    logarithmic = sparkline_rows([10, 100], height=4, peak=100, scale="log")
+    assert _filled(logarithmic, 0) > _filled(linear, 0)
+
+
 def test_dot_rows_places_higher_dot_for_more_failures():
     # counts: 0 -> none, 1 -> bottom, 2 -> top (height 2)
     top, bottom = dot_rows([0, 1, 2], height=2)

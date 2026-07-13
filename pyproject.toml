@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pytest-tqdm"
-version = "0.3.0"
+version = "0.4.0"
 description = "A single aggregated tqdm progress bar for pytest, xdist-aware, with failures printed above the bar. Interactive-only."
 readme = "README.md"
 requires-python = ">=3.9"

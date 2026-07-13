@@ -106,6 +106,13 @@ def pytest_addoption(parser):
         metavar="ROWS",
         help="Height in rows of the throughput panel (default: 5).",
     )
+    group.addoption(
+        "--tqdm-chart-scale",
+        dest="tqdm_chart_scale",
+        choices=("log", "linear"),
+        default=None,
+        help="Throughput panel scale: log (default, tames spikes) or linear.",
+    )
     parser.addini(
         "tqdm_names",
         "Stream finished test names above the bar",
@@ -143,6 +150,11 @@ def pytest_addoption(parser):
         "tqdm_chart_height",
         "Height in rows of the throughput panel (default 5)",
         default="5",
+    )
+    parser.addini(
+        "tqdm_chart_scale",
+        "Throughput panel scale: log (default) or linear",
+        default="log",
     )
 
 
@@ -251,6 +263,13 @@ def _resolve_chart_height(config):
     return max(1, int(val))
 
 
+def _resolve_chart_scale(config):
+    val = config.getoption("tqdm_chart_scale", None)
+    if val is None:
+        val = config.getini("tqdm_chart_scale") or "log"
+    return val if val in ("log", "linear") else "log"
+
+
 @contextmanager
 def _muted(writer):
     """Swallow a ``TerminalWriter``'s output, keeping its attributes intact."""
@@ -277,6 +296,7 @@ class TqdmTerminalReporter(TerminalReporter):
         interval=0.4,
         chart=False,
         chart_height=5,
+        chart_scale="log",
     ):
         super().__init__(config)
         self._names = names
@@ -296,7 +316,9 @@ class TqdmTerminalReporter(TerminalReporter):
         if chart:
             from .chart import LiveChart, Region
 
-            self._chart = LiveChart(height=chart_height, fail_height=2, color=color)
+            self._chart = LiveChart(
+                height=chart_height, fail_height=2, color=color, scale=chart_scale
+            )
             self._region = Region(sys.stderr)
         self._total = None
         self._seen = set()
@@ -577,6 +599,7 @@ def pytest_configure(config):
         interval=_resolve_interval(config),
         chart=_resolve_chart(config),
         chart_height=_resolve_chart_height(config),
+        chart_scale=_resolve_chart_scale(config),
     )
     config.pluginmanager.register(reporter, "terminalreporter")
     config.pluginmanager.register(_TqdmHelper(reporter), "tqdm-helper")

@@ -12,7 +12,7 @@ above the panel with full tracebacks; everything else stays quiet.
 Interactive-only, so it never pollutes CI logs or AI-agent output.
 
 ```
- throughput  ·  peak 32/s
+ throughput  ·  now 18/s  ·  peak 32/s  ·  log
    32 │                     ▁▄▃█▄▅█████████████████████▆▅▆▄▃▂
       │                 ▅▄█▅██████████████████████████████████▇▅▄
     0 │        ▄▅▅█████████████████████████████████████████████████▅▆▃
@@ -70,6 +70,7 @@ pytest -n auto            # bar + panel in your terminal, nothing changes in CI
 | `--no-tqdm` | `PYTEST_TQDM=0` | Force off. |
 | `--tqdm-no-chart` | `tqdm_chart` (ini) | Hide the history panel, keep just the bar. |
 | `--tqdm-chart-height=ROWS` | `tqdm_chart_height` (ini) | Throughput panel height (default `5`). |
+| `--tqdm-chart-scale=log\|linear` | `tqdm_chart_scale` (ini) | Panel scale (default `log`, tames spikes). |
 | `--tqdm-names` | `tqdm_names` (ini) | Stream every finished test name above the bar. |
 | `--tqdm-tb=full\|line\|no` | `tqdm_tb` (ini) | Traceback verbosity above the bar (default `full`). |
 | `--tqdm-color=auto\|always\|never` | `tqdm_color` (ini) | Colour (default `auto` = TTY only). `NO_COLOR` always wins. |
@@ -84,8 +85,10 @@ TTY auto-detection.
 On by default (disable with `--tqdm-no-chart`). A sticky panel above the bar,
 sampled every `--tqdm-interval` seconds and scrolling right → now:
 
-- **throughput** — green vertical bars, height ∝ tests/second that tick,
-  auto-scaled to the running peak (labelled top-right).
+- **throughput** — green vertical bars, height ∝ tests/second that tick. The
+  header shows the current and peak rate; the scale is **logarithmic by default**
+  (`--tqdm-chart-scale=linear` to switch) so a few big spikes don't flatten
+  everything else into the floor.
 - **failures** — a red dot for every tick that had a failure, its height ∝ how
   many failed that tick, so bursts stand out.
 

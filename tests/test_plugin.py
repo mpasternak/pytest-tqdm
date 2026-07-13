@@ -311,6 +311,14 @@ def test_chart_panel_on_by_default(pytester):
     assert "✓3 ✗0 s0]" in err  # the bar line is still there, below the panel
 
 
+def test_chart_header_shows_now_and_peak(pytester):
+    pytester.makepyfile(PASS3)
+    result = pytester.runpytest_subprocess("--tqdm")
+    err = result.stderr.str()
+    assert "now" in err
+    assert "peak" in err
+
+
 def test_chart_can_be_disabled(pytester):
     pytester.makepyfile(PASS3)
     result = pytester.runpytest_subprocess("--tqdm", "--tqdm-no-chart")
