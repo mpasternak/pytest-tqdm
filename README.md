@@ -90,10 +90,18 @@ Anything printed above the bar (failure tracebacks, `--tqdm-names`) scrolls
 ### The bar, colours & the face
 
 ```
-😎  42%|███████▉    | 512/1210 [00:37<00:48, 14.3 test/s, ✓510 ✗0 s0]
+😎  42%|███████▉    | 512/1210 [00:37<~00:50 ±00:09, 13.8test/s, ✓510 ✗0 s0]
 ```
 
 face · percentage · bar · done/total · elapsed<eta · throughput · ✓/✗/skip tally.
+
+The **ETA and throughput are whole-run estimates**, not a short moving window:
+the ETA is the mean time per test since the first test started × tests left, so
+it doesn't jump every time a slow or fast module goes by. The `±` band (~80 %)
+comes from how much the pace varied between consecutive batches of tests so far
+— a steady suite gets a tight band, a bursty one a wide band, and it narrows as
+the run progresses. It shows `?` until there is enough data (5 tests). The
+panel's header still shows the *current* rate.
 
 When colour is on (a TTY, or `--tqdm-color=always`), the bar is **green** while
 everything passes and flips **red** the instant a test fails (yellow if only

@@ -25,6 +25,8 @@ from enum import Enum
 import pytest
 from _pytest.terminal import TerminalReporter
 
+from .eta import EtaEstimator, format_eta, format_rate
+
 
 class Mode(Enum):
     OFF = "off"
@@ -33,9 +35,11 @@ class Mode(Enum):
 
 # tqdm hardcodes a ", " before {postfix}, so we keep the tally inside the
 # brackets where that comma reads as a natural separator.
+# ``{eta}`` / ``{avg_rate}`` are our own fields (see ``eta.py``): whole-run
+# estimates instead of tqdm's jumpy recent-rate ``{remaining}`` / ``{rate_fmt}``.
 BAR_FORMAT = (
     "{percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} "
-    "[{elapsed}<{remaining}, {rate_fmt}{postfix}]"
+    "[{elapsed}<{eta}, {avg_rate}{postfix}]"
 )
 
 
@@ -313,6 +317,7 @@ class TqdmTerminalReporter(TerminalReporter):
         self._last_done = 0
         self._fails_at_last = 0
         self._last_rate = None
+        self._eta = EtaEstimator()
         if chart:
             from .chart import LiveChart, Region
 
@@ -329,6 +334,7 @@ class TqdmTerminalReporter(TerminalReporter):
 
     # -- suppress live per-test output, but keep the bookkeeping intact --------
     def pytest_runtest_logstart(self, nodeid, location):
+        self._eta.start()  # the clock runs from the first test, not collection
         with _muted(self._tw):
             super().pytest_runtest_logstart(nodeid, location)
 
@@ -344,11 +350,31 @@ class TqdmTerminalReporter(TerminalReporter):
             self._bar.total = total
             self._bar.refresh()
 
+    def _eta_fields(self, now=None):
+        """Extra ``bar_format`` fields: whole-run ETA (with spread) and rate."""
+        from tqdm import tqdm
+
+        return {
+            "eta": format_eta(
+                self._eta.estimate(self._total, now), tqdm.format_interval
+            ),
+            "avg_rate": format_rate(self._eta.rate(now)),
+        }
+
     def _ensure_bar(self):
         if self._bar is None:
             from tqdm import tqdm
 
-            self._bar = tqdm(
+            reporter = self
+
+            class _Bar(tqdm):
+                @property
+                def format_dict(self):
+                    d = super().format_dict
+                    d.update(reporter._eta_fields())
+                    return d
+
+            self._bar = _Bar(
                 total=self._total,
                 dynamic_ncols=True,
                 leave=False,
@@ -402,7 +428,7 @@ class TqdmTerminalReporter(TerminalReporter):
 
     def close_bar(self):
         if self._chart is not None:
-            elapsed = time.monotonic() - self._t0 if self._t0 is not None else 0.0
+            elapsed = self._eta.elapsed()
             self._region.close(self._totals_line(elapsed))
             self._chart = None
             return
@@ -452,6 +478,7 @@ class TqdmTerminalReporter(TerminalReporter):
             return
         self._seen.add(nodeid)
 
+        self._eta.record()
         if outcome == "failed":
             self._failed += 1
             self._write_failure(report)
@@ -495,7 +522,7 @@ class TqdmTerminalReporter(TerminalReporter):
             now = time.monotonic()
         if self._t0 is None:
             self._t0 = now
-        elapsed = now - self._t0
+        elapsed = self._eta.elapsed(now)
         done = self._passed + self._failed + self._skipped
         width = shutil.get_terminal_size((80, 24)).columns
         bar_line = tqdm.format_meter(
@@ -506,8 +533,8 @@ class TqdmTerminalReporter(TerminalReporter):
             bar_format=BAR_FORMAT,
             postfix=self._postfix(),
             colour=self._state_colour(),
-            rate=self._last_rate,
             unit="test",
+            **self._eta_fields(now),
         )
         self._region.update(self._chart.render(width, bar_line))
 
